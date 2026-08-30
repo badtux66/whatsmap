@@ -96,7 +96,10 @@ function renderConnection(s) {
     const box = el("div", "qr-box");
     box.appendChild(drawQR(s.qr_matrix));
     const cap = el("p", "qr-caption");
-    cap.textContent = `Mock code — expires in ${s.expires_in_sec}s. This encodes nothing real.`;
+    const expiry = s.expires_in_sec ? ` — refreshes in ~${s.expires_in_sec}s` : "";
+    cap.textContent = s.mock
+      ? `Mock code${expiry}. This encodes nothing real.`
+      : `Scan in WhatsApp → Linked devices${expiry}.`;
     box.appendChild(cap);
     body.appendChild(box);
   }
@@ -217,6 +220,41 @@ function markChosen(ul) {
     const input = li.querySelector("input");
     li.classList.toggle("chosen", input && input.checked);
   });
+}
+
+async function reloadParticipants() {
+  try {
+    renderParticipants(await getJSON("/api/participants"));
+  } catch (e) {
+    /* leave existing list in place */
+  }
+}
+
+async function enrollParticipant(ev) {
+  ev.preventDefault();
+  const body = {
+    contact: $("enrollContact").value.trim(),
+    label: $("enrollLabel").value.trim(),
+    basis: (document.querySelector('input[name="basis"]:checked') || {}).value || "",
+    reference: $("enrollRef").value.trim(),
+    attestation: $("enrollAttest").checked,
+  };
+  const msg = $("enrollMsg");
+  msg.innerHTML = "";
+  const { ok, data } = await postJSON("/api/participants", body);
+  if (!ok) {
+    const m = el("div", "msg error");
+    m.textContent = (data.errors && data.errors.join(" ")) || data.error || "Could not enroll participant.";
+    msg.appendChild(m);
+    return;
+  }
+  const okMsg = el("div", "msg ok");
+  okMsg.textContent = `Enrolled ${data.label} (${data.masked_contact}). It can now be selected below.`;
+  msg.appendChild(okMsg);
+  $("enrollForm").reset();
+  state.selectedParticipant = data.id;
+  await reloadParticipants();
+  revalidate();
 }
 
 // ---- Experiment form -------------------------------------------------------
@@ -570,6 +608,13 @@ async function boot() {
   $("expForm").addEventListener("submit", startExperiment);
   $("stopBtn").addEventListener("click", stopExperiment);
   $("emergencyStop").addEventListener("click", stopExperiment);
+  $("enrollForm").addEventListener("submit", enrollParticipant);
+  document.querySelectorAll('input[name="basis"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      const consent = document.querySelector('input[name="basis"]:checked').value === "consent";
+      $("refUnit").textContent = consent ? "(required for consent)" : "(optional for owned device)";
+    });
+  });
   ["intervalMs", "durationSec", "maxProbes", "timeoutMs", "testState"].forEach((id) => {
     $(id).addEventListener("input", revalidate);
   });

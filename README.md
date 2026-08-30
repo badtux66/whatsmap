@@ -44,14 +44,17 @@ participant allowlisting, safe experiment limits, and hypothesis-framed results.
 ## Quick Start (recommended): Research Governance Console
 
 A responsive, accessible web console for **authorized, consent-based** research
-lives under [`webui/`](webui/README.md). It enforces an allowlist of
-consent-verified participants, frames latency bands as hypotheses (never proof
-of a device state), bounds experiment parameters with safe minimums and an
-always-available emergency stop, and runs on **mock data only** — it does not
-link an account or drive live probing.
+lives under [`webui/`](webui/README.md). It gates targeting behind an
+ownership/consent attestation (any number can be enrolled, but only once
+attested), frames latency bands as hypotheses (never proof of a device state),
+and bounds experiment parameters with safe minimums and an always-available
+emergency stop. Experiment telemetry is **mock** — the covert probing engine is
+not wired in. QR login is mock by default; `-live` links the researcher's own
+account via the official WhatsApp linked-device flow.
 
 ```bash
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080            # mock QR
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -live      # real self-account QR
 # open http://127.0.0.1:8080
 ```
 

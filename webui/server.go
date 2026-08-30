@@ -3,8 +3,10 @@ package webui
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,24 +25,24 @@ const (
 
 // Server is the research governance dashboard. It is safe for concurrent use.
 //
-// It intentionally holds no WhatsApp client and drives no real probing: all
-// telemetry is synthesized locally (see mock.go). Wiring it to a live,
-// authorized measurement backend is deliberately out of scope for this package.
+// Experiment telemetry is synthesized locally (see mock.go); the covert probing
+// engine in the mapper package is intentionally not wired in. The account link
+// is handled by a SessionLinker: the default mock linker pairs nothing, while
+// the webui/live linker performs a real WhatsApp linked-device pairing of the
+// researcher's *own* account. Either way, who may be measured is gated only by
+// the participant consent allowlist, never by the link.
 type Server struct {
-	log waLog.Logger
-	now func() time.Time
+	log    waLog.Logger
+	now    func() time.Time
+	linker SessionLinker
 
 	mu sync.Mutex
 
-	// Session (QR link) state.
-	sessState   ConnectionState
-	sessSince   time.Time
-	sessQR      [][]bool
-	sessOutcome ConnectionState // Terminal state a pending session resolves to (connected/expired/error).
-	sessAccount string
-
-	// Participant allowlist.
+	// Participant allowlist. rawContacts holds the (unexposed) raw number for
+	// enrolled participants, keyed by participant ID.
 	participants []*Participant
+	rawContacts  map[string]string
+	enrollSeq    int
 
 	// Experiment state.
 	expStatus    ExperimentStatus
@@ -55,18 +57,37 @@ type Server struct {
 	stopCh       chan struct{}
 }
 
-// New creates a Server seeded with the mock allowlist.
-func New(log waLog.Logger) *Server {
+// Option configures a Server.
+type Option func(*Server)
+
+// WithLinker replaces the default mock account linker (e.g. with a real
+// WhatsApp linked-device linker from the webui/live package).
+func WithLinker(l SessionLinker) Option {
+	return func(s *Server) {
+		if s.linker != nil {
+			_ = s.linker.Close()
+		}
+		s.linker = l
+	}
+}
+
+// New creates a Server seeded with the mock allowlist and mock account linker.
+func New(log waLog.Logger, opts ...Option) *Server {
 	if log == nil {
 		log = waLog.Noop
 	}
-	return &Server{
+	s := &Server{
 		log:          log,
 		now:          time.Now,
-		sessState:    ConnIdle,
 		participants: mockParticipants(),
+		rawContacts:  map[string]string{},
 		expStatus:    ExpIdle,
 	}
+	s.linker = newMockLinker(s.now)
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Handler returns the HTTP handler for the dashboard and its JSON API.
@@ -106,10 +127,8 @@ func securityHeaders(next http.Handler) http.Handler {
 // ---- Session (QR) endpoints ------------------------------------------------
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.advanceSessionLocked()
-	writeJSON(w, http.StatusOK, s.sessionStatusLocked())
+	// SECURITY: the linker never logs the pairing code or any token.
+	writeJSON(w, http.StatusOK, s.linker.Status())
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -117,27 +136,9 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// A "simulate" hint lets the UI and tests exercise the non-happy terminal
-	// states. It never affects real credentials; there are none.
-	outcome := ConnConnected
-	switch r.URL.Query().Get("simulate") {
-	case "expired":
-		outcome = ConnExpired
-	case "error":
-		outcome = ConnError
-	}
-
-	s.sessState = ConnPending
-	s.sessSince = s.now()
-	s.sessQR = mockQRMatrix(s.sessSince.UnixNano())
-	s.sessOutcome = outcome
-	s.sessAccount = "research-lab-01 (mock)"
-	// SECURITY: never log the QR matrix, account identifier, or any token.
-	s.log.Infof("QR pairing started (mock); awaiting scan")
-	writeJSON(w, http.StatusOK, s.sessionStatusLocked())
+	st := s.linker.Connect(r.URL.Query().Get("simulate"))
+	s.log.Infof("Account pairing started (mock=%t); awaiting scan", st.Mock)
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -146,86 +147,117 @@ func (s *Server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.stopExperimentLocked(ExpStopped, "Research account disconnected.")
-	s.sessState = ConnDisconnected
-	s.sessQR = nil
-	s.sessAccount = ""
-	s.log.Infof("Research account disconnected (mock)")
-	writeJSON(w, http.StatusOK, s.sessionStatusLocked())
-}
-
-// advanceSessionLocked drives the mock QR state machine based on elapsed time.
-func (s *Server) advanceSessionLocked() {
-	if s.sessState != ConnPending {
-		return
-	}
-	elapsed := s.now().Sub(s.sessSince)
-	switch s.sessOutcome {
-	case ConnError:
-		if elapsed >= mockScanDelay {
-			s.sessState = ConnError
-			s.sessQR = nil
-		}
-	case ConnExpired:
-		if elapsed >= mockQRExpiry {
-			s.sessState = ConnExpired
-			s.sessQR = nil
-		}
-	default: // ConnConnected
-		if elapsed >= mockScanDelay {
-			s.sessState = ConnConnected
-			s.sessQR = nil
-		} else if elapsed >= mockQRExpiry {
-			s.sessState = ConnExpired
-			s.sessQR = nil
-		}
-	}
-}
-
-func (s *Server) sessionStatusLocked() SessionStatus {
-	st := SessionStatus{State: s.sessState, Mock: true}
-	switch s.sessState {
-	case ConnPending:
-		remain := int((mockQRExpiry - s.now().Sub(s.sessSince)).Seconds())
-		if remain < 0 {
-			remain = 0
-		}
-		st.ExpiresInSec = remain
-		st.QRMatrix = s.sessQR
-		st.Message = "Scan the placeholder code to link the research account."
-	case ConnConnected:
-		st.Account = s.sessAccount
-		st.Message = "Research account linked (mock). Live probing is not wired in this build."
-	case ConnExpired:
-		st.Message = "The pairing code expired. Generate a new one to try again."
-	case ConnDisconnected:
-		st.Message = "Disconnected. Reconnect to run experiments."
-	case ConnError:
-		st.Message = "Pairing failed. Check the integration and try again."
-	default:
-		st.Message = "Not connected. Link an approved research account to begin."
-	}
-	return st
+	s.mu.Unlock()
+	st := s.linker.Disconnect()
+	s.log.Infof("Research account disconnected")
+	writeJSON(w, http.StatusOK, st)
 }
 
 // ---- Participant / metadata endpoints -------------------------------------
 
 func (s *Server) handleParticipants(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listParticipants(w)
+	case http.MethodPost:
+		s.enrollParticipant(w, r)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "GET or POST required")
+	}
+}
+
+type participantRow struct {
+	*Participant
+	Eligible bool `json:"eligible"`
+}
+
+func (s *Server) listParticipants(w http.ResponseWriter) {
 	s.mu.Lock()
-	participants := s.participants
+	participants := append([]*Participant(nil), s.participants...)
 	now := s.now()
 	s.mu.Unlock()
 
-	type row struct {
-		*Participant
-		Eligible bool `json:"eligible"`
-	}
-	out := make([]row, 0, len(participants))
+	out := make([]participantRow, 0, len(participants))
 	for _, p := range participants {
-		out = append(out, row{Participant: p, Eligible: p.Eligible(now)})
+		out = append(out, participantRow{Participant: p, Eligible: p.Eligible(now)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// enrollRequest is the body for enrolling any phone number. Enrollment is the
+// consent gate: a number becomes targetable only once the researcher attests to
+// ownership or documented consent and supplies a reference.
+type enrollRequest struct {
+	Label       string `json:"label"`
+	Contact     string `json:"contact"`
+	Basis       string `json:"basis"` // "ownership" | "consent"
+	Reference   string `json:"reference"`
+	Attestation bool   `json:"attestation"`
+}
+
+func (s *Server) enrollParticipant(w http.ResponseWriter, r *http.Request) {
+	var req enrollRequest
+	defer r.Body.Close()
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<16))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid JSON body")
+		return
+	}
+
+	var errs []string
+	if !req.Attestation {
+		errs = append(errs, "You must confirm this is a device you own or a participant who has given documented consent.")
+	}
+	digits := digitsOnly(req.Contact)
+	if len(digits) < 6 {
+		errs = append(errs, "Enter a valid phone number (with country code).")
+	}
+	switch req.Basis {
+	case "ownership":
+		// A reference is optional for a device you own.
+	case "consent":
+		if req.Reference == "" {
+			errs = append(errs, "A consent/authorization reference is required for a consenting participant.")
+		}
+	default:
+		errs = append(errs, "Select a basis: device ownership or documented consent.")
+	}
+	if len(errs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{"errors": errs})
+		return
+	}
+
+	s.mu.Lock()
+	s.enrollSeq++
+	id := fmt.Sprintf("u-%03d", s.enrollSeq)
+	ref := req.Reference
+	if req.Basis == "ownership" && ref == "" {
+		ref = "self-owned device"
+	}
+	label := req.Label
+	if label == "" {
+		label = "Participant " + maskContact(digits)
+	}
+	p := &Participant{
+		ID:                id,
+		Label:             label,
+		MaskedContact:     maskContact(digits),
+		ConsentStatus:     ConsentVerified,
+		ConsentRef:        ref,
+		OwnershipVerified: req.Basis == "ownership",
+		ConsentExpiry:     "",
+		Enrolled:          true,
+	}
+	s.participants = append(s.participants, p)
+	s.rawContacts[id] = digits // Stored server-side, never returned to clients.
+	now := s.now()
+	s.mu.Unlock()
+
+	// SECURITY: log the participant ID and basis only, never the raw number.
+	s.log.Infof("Enrolled participant %s (basis=%s)", id, req.Basis)
+	writeJSON(w, http.StatusOK, participantRow{Participant: p, Eligible: p.Eligible(now)})
 }
 
 func (s *Server) handleTestStates(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +303,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.sessState != ConnConnected {
+	if s.linker.Status().State != ConnConnected {
 		writeErr(w, http.StatusPreconditionFailed, "Link a research account before starting an experiment.")
 		return
 	}
@@ -435,7 +467,7 @@ func (s *Server) experimentStateLocked() ExperimentState {
 
 func (s *Server) buildTelemetryLocked() Telemetry {
 	t := Telemetry{
-		Connection:   s.sessState,
+		Connection:   s.linker.Status().State,
 		Running:      s.expStatus == ExpRunning,
 		Samples:      append([]Sample(nil), s.samples...),
 		Bands:        Bands,
@@ -506,4 +538,30 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// digitsOnly strips everything but digits from a phone number input.
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// maskContact returns a privacy-preserving rendering of a phone number that
+// keeps only a short prefix and the last two digits, e.g. "+1 415•••••34".
+func maskContact(digits string) string {
+	if len(digits) <= 4 {
+		return "•••" + digits
+	}
+	prefix := digits[:len(digits)-2]
+	last := digits[len(digits)-2:]
+	shown := prefix
+	if len(prefix) > 4 {
+		shown = prefix[:4]
+	}
+	return "+" + shown + strings.Repeat("•", len(digits)-len(shown)-2) + last
 }

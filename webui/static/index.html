@@ -38,10 +38,40 @@
     <!-- 2. Participants -->
     <section class="card col-8" aria-labelledby="partH">
       <h2 id="partH">Authorized participants</h2>
-      <p class="card-hint">Only participants with verified consent or documented device-ownership can be targeted. Free-form number entry is intentionally not available.</p>
+      <p class="card-hint">Any number can be enrolled, but only after you attest to device ownership or documented consent. Un-attested numbers cannot be targeted.</p>
       <div id="partBody" aria-live="polite">
         <p class="state-block">Loading…</p>
       </div>
+
+      <details class="enroll">
+        <summary>Enroll a phone number</summary>
+        <form id="enrollForm" novalidate>
+          <div class="field">
+            <label for="enrollContact">Phone number <span class="unit">(with country code)</span></label>
+            <input type="tel" id="enrollContact" name="contact" autocomplete="off" inputmode="tel" placeholder="e.g. 14155551234">
+          </div>
+          <div class="field">
+            <label for="enrollLabel">Label <span class="unit">(optional)</span></label>
+            <input type="text" id="enrollLabel" name="label" autocomplete="off" placeholder="e.g. Lab device C">
+          </div>
+          <fieldset class="field basis">
+            <legend>Basis for measurement</legend>
+            <label class="radio"><input type="radio" name="basis" value="ownership" checked> I own and control this device</label>
+            <label class="radio"><input type="radio" name="basis" value="consent"> The person has given documented consent</label>
+          </fieldset>
+          <div class="field">
+            <label for="enrollRef">Consent / authorization reference <span class="unit" id="refUnit">(required for consent)</span></label>
+            <input type="text" id="enrollRef" name="reference" autocomplete="off" placeholder="e.g. IRB-2026-014 / form C-5">
+          </div>
+          <div class="field attest">
+            <label class="check"><input type="checkbox" id="enrollAttest" name="attestation"> I confirm this is a device I own, or a participant who has given documented, informed consent to be measured.</label>
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="primary">Enroll participant</button>
+          </div>
+          <div id="enrollMsg" role="alert"></div>
+        </form>
+      </details>
     </section>
 
     <!-- 3. Experiment controls -->
