@@ -86,10 +86,16 @@ function renderConnection(s) {
   body.appendChild(pill);
 
   if (s.message) {
-    const p = el("p", "card-hint");
-    p.style.marginTop = "10px";
-    p.textContent = s.message;
-    body.appendChild(p);
+    if (s.state === "error" || s.state === "expired") {
+      const m = el("div", "msg " + (s.state === "error" ? "error" : "warn"));
+      m.textContent = s.message;
+      body.appendChild(m);
+    } else {
+      const p = el("p", "card-hint");
+      p.style.marginTop = "10px";
+      p.textContent = s.message;
+      body.appendChild(p);
+    }
   }
 
   if (s.state === "pending" && s.qr_matrix) {
@@ -631,6 +637,9 @@ async function boot() {
     renderTestStates(testStates);
     onExperimentState(exp);
     if (exp.status === "running") startTelemetryPolling();
+    // Kick off pairing automatically so the QR (or a clear error) appears
+    // without a manual click when nothing is linked yet.
+    if (session.state === "idle") act("/api/session/connect");
   } catch (e) {
     showConnError();
     $("partBody").textContent = "";

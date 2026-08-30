@@ -115,8 +115,8 @@ func (l *Linker) readQR(ch <-chan whatsmeow.QRChannelItem) {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			// SECURITY: encode the code into a scannable matrix; never log item.Code.
-			if m, err := qrcode.New(item.Code, qrcode.Medium); err == nil {
-				l.qr = m.Bitmap()
+			if m := encodeQR(item.Code); m != nil {
+				l.qr = m
 			}
 			l.state = webui.ConnPending
 			l.message = "Scan the code in WhatsApp → Linked devices."
@@ -230,6 +230,16 @@ func (l *Linker) cancelLocked() {
 		l.cancel()
 		l.cancel = nil
 	}
+}
+
+// encodeQR turns a pairing code string into a boolean module matrix suitable for
+// the console's SVG renderer. Returns nil if the code cannot be encoded.
+func encodeQR(code string) [][]bool {
+	m, err := qrcode.New(code, qrcode.Medium)
+	if err != nil {
+		return nil
+	}
+	return m.Bitmap()
 }
 
 // maskJID renders a JID with only the last two digits of the user part visible,
