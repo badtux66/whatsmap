@@ -640,12 +640,18 @@ async function boot() {
   }
 
   runValidate();
-  // Refresh the connection card periodically so the mock QR state machine
-  // (pending → connected/expired) is reflected without a manual reload.
+  // Refresh the connection card so pairing progresses without a manual reload.
+  // Poll quickly while a code is pending (real QR codes rotate every ~20s and
+  // we want the freshest one on screen) and slowly once the state settles.
+  let lastPoll = 0;
   setInterval(async () => {
     if (state.running) return;
+    const fast = state.connection === "pending" || state.connection === "idle";
+    const now = Date.now();
+    if (now - lastPoll < (fast ? 1500 : 4000)) return;
+    lastPoll = now;
     try { renderConnection(await getJSON("/api/session")); } catch (e) { /* ignore */ }
-  }, 2500);
+  }, 500);
 }
 
 document.addEventListener("DOMContentLoaded", boot);

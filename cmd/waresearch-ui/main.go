@@ -6,10 +6,12 @@
 // consent allowlist, safe experiment limits, emergency stop) that authorized
 // timing research requires.
 //
-// By default the QR login is also a mock. Pass -live to link the researcher's
-// OWN WhatsApp account via the official "Linked devices" QR flow; this only
-// establishes the account link and never measures anyone — who may be measured
-// is still gated entirely by the consent allowlist.
+// By default the console links the researcher's OWN WhatsApp account via the
+// official "Linked devices" QR flow; that linked account is the only account.
+// Linking only establishes the connection and never measures anyone — who may
+// be measured is still gated entirely by the consent allowlist. Pass -mock for
+// an offline demo that links nothing (useful for UI development without a phone
+// or network).
 package main
 
 import (
@@ -32,19 +34,20 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "Address to listen on")
 	logLevel := flag.String("log", "INFO", "Log level (DEBUG, INFO, WARN, ERROR)")
-	liveLink := flag.Bool("live", false, "Link a real WhatsApp account (your own) via QR instead of the mock flow")
-	sessionDB := flag.String("session-db", "waresearch.db", "Path to the linked-account session database (with -live)")
+	mock := flag.Bool("mock", false, "Offline demo: use a placeholder QR that links nothing (for UI development)")
+	sessionDB := flag.String("session-db", "waresearch.db", "Path to the linked-account session database")
 	flag.Parse()
 
 	logger := waLog.Stdout("ResearchUI", *logLevel, true)
 
 	var opts []webui.Option
-	mode := "mock QR"
-	if *liveLink {
+	mode := "live WhatsApp QR (own account)"
+	if *mock {
+		mode = "offline mock QR (links nothing)"
+	} else {
 		linker := live.New(*sessionDB, logger.Sub("Link"))
 		defer linker.Close()
 		opts = append(opts, webui.WithLinker(linker))
-		mode = "live WhatsApp QR (own account)"
 	}
 	server := webui.New(logger.Sub("Server"), opts...)
 

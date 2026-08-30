@@ -100,7 +100,7 @@ func (l *Linker) Connect(_ string) webui.SessionStatus {
 		l.cancel = nil
 		l.log.Errorf("live linker: connect: %v", err)
 		l.state = webui.ConnError
-		l.message = "Could not connect to WhatsApp."
+		l.message = "Could not reach WhatsApp to start pairing (check the server's network/logs)."
 		return l.statusLocked()
 	}
 	l.state = webui.ConnPending

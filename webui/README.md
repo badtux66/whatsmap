@@ -3,9 +3,9 @@
 A responsive, accessible web console for **authorized, consent-based** WhatsApp
 timing research. It is a governance layer: it demonstrates and enforces the
 controls that legitimate RTT research requires. Experiment telemetry is **mock**
-(the covert probing engine in the `mapper` package is not wired in); the QR
-login is mock by default and can optionally link the researcher's **own**
-account for real (`-live`).
+(the covert probing engine in the `mapper` package is not wired in). The QR
+login links the researcher's **own** WhatsApp account for real by default; an
+offline placeholder flow is available with `-mock` for UI development.
 
 ## Why this exists
 
@@ -32,21 +32,23 @@ knowledge. This console deliberately moves in the opposite direction:
 ## Run it
 
 ```bash
-# Mock QR login (default) — nothing links, telemetry is synthetic
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080
+# Real QR login for YOUR OWN account (default; WhatsApp → Linked devices)
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -session-db waresearch.db
 
-# Real QR login for YOUR OWN account (WhatsApp → Linked devices)
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -live -session-db waresearch.db
+# Offline demo — placeholder QR that links nothing (UI development)
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -mock
 # then open http://127.0.0.1:8080
 ```
 
 Flags: `-addr` (listen address, default `127.0.0.1:8080`), `-log`
-(`DEBUG|INFO|WARN|ERROR`), `-live` (real account linking), and `-session-db`
-(linked-account session store path, used with `-live`).
+(`DEBUG|INFO|WARN|ERROR`), `-mock` (offline placeholder QR), and `-session-db`
+(linked-account session store path).
 
-`-live` links only the researcher's own account so a scannable code can be
-shown; it starts no probing. Experiment telemetry remains mock either way, and
-who may be measured is always gated by the consent allowlist.
+The default links only the researcher's own account so a scannable code can be
+shown; it starts no probing. Real linking needs outbound access to
+`web.whatsapp.com` — if the server can't reach it, the card shows a pairing
+error (use `-mock` for offline UI work). Experiment telemetry remains mock
+either way, and who may be measured is always gated by the consent allowlist.
 
 ## Layout
 

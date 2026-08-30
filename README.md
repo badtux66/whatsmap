@@ -49,12 +49,13 @@ ownership/consent attestation (any number can be enrolled, but only once
 attested), frames latency bands as hypotheses (never proof of a device state),
 and bounds experiment parameters with safe minimums and an always-available
 emergency stop. Experiment telemetry is **mock** — the covert probing engine is
-not wired in. QR login is mock by default; `-live` links the researcher's own
-account via the official WhatsApp linked-device flow.
+not wired in. By default QR login links the researcher's own account via the
+official WhatsApp linked-device flow; `-mock` gives an offline placeholder for
+UI work.
 
 ```bash
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080            # mock QR
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -live      # real self-account QR
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080            # real self-account QR (default)
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080 -mock      # offline placeholder QR
 # open http://127.0.0.1:8080
 ```
 
