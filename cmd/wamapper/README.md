@@ -1,18 +1,29 @@
 # WhatsApp Mapper (wamapper)
 
-A tool for authorized OSINT research based on the ["Careless Whisper"](https://arxiv.org/abs/2411.11194) research paper. This tool measures WhatsApp delivery receipt Round-Trip Times (RTT) to infer device activity patterns.
+A lower-level research tool based on the ["Careless Whisper"](https://arxiv.org/abs/2411.11194) research paper. It measures WhatsApp delivery-receipt Round-Trip Times (RTT) and derives *hypotheses* about device activity patterns.
 
-> ⚠️ **LEGAL DISCLAIMER**: This tool is designed for authorized penetration testing and OSINT research on company-owned devices only. Unauthorized monitoring of individuals is illegal in most jurisdictions.
+> ⚠️ **LEGAL & ETHICAL NOTICE**: Use this tool **only** on devices you own or on
+> participants who have given documented, informed consent. It accepts a raw
+> phone number and performs **no consent checks of its own** — that
+> responsibility is entirely yours, on every run. Measuring a non-consenting
+> person is a privacy violation and is illegal in most jurisdictions. For a
+> consent-gated interface with participant allowlisting and safe limits, use the
+> [Research Governance Console](../../webui/README.md) instead.
 
-## Features
+## What it can suggest (hypotheses, not facts)
 
-Based on the research paper findings, this tool can infer:
-- **Screen On/Off State**: RTT < 1000ms typically indicates screen is on
-- **App Foreground**: RTT < 300ms suggests WhatsApp is actively open
-- **Sleep Patterns**: Consistent high RTT periods indicate phone inactivity
-- **Device Type**: iOS vs Android based on RTT variance patterns
-- **Connection Type**: WiFi vs Cellular estimation from RTT consistency
-- **Multi-device Usage**: Detection of companion devices (desktop/web clients)
+RTT is an indirect signal. The tool derives the following *possibilities*, each
+of which should be reported with confidence and uncertainty rather than treated
+as ground truth:
+- **Screen on/off**: RTT < 1000 ms is *consistent with* the screen being on
+- **App foreground**: RTT < 300 ms *may suggest* WhatsApp is in the foreground
+- **Inactivity**: sustained high RTT *may indicate* the device is idle
+- **Device type**: iOS vs Android *estimate* from RTT variance patterns
+- **Connection type**: Wi-Fi vs cellular *estimate* from RTT consistency
+- **Multi-device usage**: *possible* companion devices (desktop/web clients)
+
+These are correlations observed in the research, not deterministic mappings;
+network conditions and server load can produce the same timings.
 
 ## Installation
 
@@ -50,20 +61,22 @@ First, you need to link the tool to a WhatsApp account:
 
 Scan the QR code with WhatsApp → Linked Devices → Link a Device
 
-### Step 2: Start Probing
+### Step 2: Start Measuring (consented participant / owned device)
 
-Probe a target phone number (must be a valid WhatsApp user):
+Before running, confirm the number belongs to a device you own or a participant
+who has given documented, informed consent:
 
 ```bash
-# Basic probe (2-second intervals)
+# Basic run (2-second intervals)
 ./wamapper -mode probe -target 14155551234
 
-# Extended monitoring (24 hours, 30-second intervals)
+# Extended run (24 hours, considerate 30-second interval)
 ./wamapper -mode probe -target 14155551234 -duration 24h -interval 30s
-
-# High-frequency probing (for detailed activity capture)
-./wamapper -mode probe -target 14155551234 -interval 500ms -duration 1h
 ```
+
+Keep the interval considerate (seconds, not sub-second). Very high-frequency
+probing increases load and is not appropriate for research on a shared service;
+the governance console enforces a one-probe-per-second floor for this reason.
 
 ### Step 3: Analyze Results
 
@@ -100,26 +113,37 @@ python analysis/visualize.py data.csv -o report.png
 | `-export-csv` | Export to CSV file | - |
 | `-log` | Log level: DEBUG, INFO, WARN, ERROR | INFO |
 
-## RTT Interpretation
+## RTT Interpretation (hypotheses)
 
-Based on the Careless Whisper paper:
+Based on the Careless Whisper paper. Each row is a *possible* interpretation,
+not a confirmed state — the bands overlap and network conditions can reproduce
+any of these timings:
 
-| RTT Range | Inferred State | Description |
-|-----------|----------------|-------------|
-| < 300ms | App Foreground | WhatsApp is actively being used |
-| 300-1000ms | Screen On | Phone is active, WA in background |
-| 1000-3000ms | Screen Off | Phone screen is off |
-| 3000-10000ms | Doze Mode | Power saving mode active |
-| > 10000ms | Deep Sleep | Extended inactivity |
-| Timeout | Offline | No data connection |
+| RTT Range | Possible interpretation |
+|-----------|-------------------------|
+| < 300 ms | *possible* app foreground |
+| 300–1000 ms | *possible* screen-on / background |
+| 1000–3000 ms | *possible* screen-off |
+| 3000–10000 ms | *possible* doze / power-saving |
+| > 10000 ms | *possible* extended inactivity or network delay |
+| Timeout | unreachable (offline or no data connection) |
+
+**Confounders to keep in mind:** network RTT (cellular/Wi-Fi), packet loss,
+messaging-server load, and connection reuse. Report interpretations with
+confidence and uncertainty, and never present RTT as proof of device state.
 
 ## Probe Types
 
-### Reaction (Recommended)
-Sends reactions to non-existent messages. The target device responds with a delivery receipt but shows no notification.
+Each of these elicits a delivery receipt without notifying the measured device —
+a privacy side-channel that is only appropriate with consent or on your own
+device.
+
+### Reaction
+Sends a reaction to a non-existent message; the device responds with a delivery
+receipt. The most reliable of the three.
 
 ### Receipt
-Uses read receipt mechanism. Less reliable but doesn't require message creation.
+Uses the read-receipt mechanism. Less reliable but doesn't require message creation.
 
 ### Presence
 Subscribes to online/offline presence. Provides direct status but may be rate-limited.
@@ -182,12 +206,14 @@ The Python visualization generates:
 4. **State Distribution**: Pie chart of time spent in each state
 5. **RTT Histogram**: Distribution of RTT values with threshold markers
 
-## Security Considerations
+## Security & Privacy Considerations
 
-- All data is stored locally in SQLite databases
-- No data is transmitted to external servers
-- The probing technique uses WhatsApp's standard delivery receipt mechanism
-- Reactions to non-existent messages do not trigger notifications on the target device
+- All data is stored locally in SQLite databases; nothing is sent to external servers.
+- The technique uses WhatsApp's standard delivery-receipt mechanism.
+- Because the measurement is **not visible** to the device owner, it is a privacy
+  side-channel: only run it with documented consent or on a device you own.
+- Store measurements securely and delete them when the research no longer needs
+  them; timing traces can be sensitive.
 
 ## Research Reference
 

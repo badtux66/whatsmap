@@ -1,26 +1,70 @@
-# WhatsMap - WhatsApp Activity Mapper
+# WhatsMap - WhatsApp Timing-Research Toolkit
 
-**RTT-based device activity monitoring for authorized OSINT research**
+**RTT timing measurement for authorized, consent-based research**
 
 Based on the ["Careless Whisper"](https://arxiv.org/abs/2411.11194) research paper (RAID 2025 Best Paper Award).
 
-> ⚠️ **LEGAL DISCLAIMER**: This tool is designed for authorized penetration testing and OSINT research on company-owned devices only. Unauthorized monitoring of individuals is illegal.
+> ⚠️ **LEGAL & ETHICAL NOTICE**: This project studies a real privacy
+> side-channel. It is intended **only** for authorized research measuring
+> devices whose owners have given **documented, informed consent**, or devices
+> you own and control. Measuring a person who has not consented is a privacy
+> violation and is illegal in most jurisdictions. Round-trip time is an
+> *indirect* signal: it never proves what a device or its user is doing.
 
 ---
 
 ## Overview
 
-WhatsMap extends the [whatsmeow](https://github.com/tulir/whatsmeow) library with RTT-based activity monitoring capabilities. It uses delivery receipt timing to infer device states without alerting the target.
+WhatsMap extends the [whatsmeow](https://github.com/tulir/whatsmeow) library
+with tooling to measure WhatsApp delivery-receipt round-trip times (RTT) and to
+study how those timings *may* relate to device activity. RTT is treated as a
+research signal to be interpreted with uncertainty — not as a monitoring oracle.
+
+The recommended way to use the toolkit is the
+[Research Governance Console](webui/README.md), which enforces consent-verified
+participant allowlisting, safe experiment limits, and hypothesis-framed results.
 
 ### Key Features
 
-- **Stealthy Probing**: Uses reactions to non-existent messages (no notifications on target)
-- **RTT Analysis**: Measures round-trip times to infer screen on/off states
-- **Device Detection**: Identifies iOS vs Android based on timing patterns
-- **Activity Mapping**: Generates heatmaps of device usage over time
-- **Pattern Recognition**: Detects wake/sleep times, active usage periods
+- **Consent-gated workflow**: the governance console restricts measurement to an
+  allowlist of participants with verified consent or documented device-ownership.
+- **RTT measurement**: records delivery-receipt round-trip times and their
+  distribution (median, p95, spread).
+- **Hypothesis-based interpretation**: maps RTT into *possible* activity bands,
+  always shown with confidence, uncertainty, and confounders — never as proof.
+- **Distribution & pattern analysis**: aggregates timings into daily/hourly
+  summaries for research review.
+- **Local-only storage**: measurements stay in a local SQLite database.
 
-## Quick Start
+> **A note on the probing mechanism.** The underlying technique elicits a
+> delivery receipt without showing a notification to the measured device. That
+> property is exactly what makes the side-channel a privacy risk, and it is why
+> consent and authorization are mandatory here rather than optional.
+
+## Quick Start (recommended): Research Governance Console
+
+A responsive, accessible web console for **authorized, consent-based** research
+lives under [`webui/`](webui/README.md). It enforces an allowlist of
+consent-verified participants, frames latency bands as hypotheses (never proof
+of a device state), bounds experiment parameters with safe minimums and an
+always-available emergency stop, and runs on **mock data only** — it does not
+link an account or drive live probing.
+
+```bash
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080
+# open http://127.0.0.1:8080
+```
+
+Start here: the console is the interface designed to keep research within its
+authorized, consented scope.
+
+## Low-level CLI (`wamapper`)
+
+The `wamapper` command is a lower-level research tool. Because it accepts a raw
+phone number, it performs **no consent checks of its own** — you are responsible
+for confirming, before every run, that the number belongs to a device you own or
+to a participant who has given documented, informed consent. Prefer the
+governance console for anything beyond local self-testing.
 
 ### 1. Build the Tool
 
@@ -36,10 +80,11 @@ go build -o wamapper
 # Scan QR with WhatsApp → Linked Devices
 ```
 
-### 3. Start Monitoring
+### 3. Measure a Consented Participant
 
 ```bash
-# Monitor target for 24 hours with 30-second intervals
+# Measure a device you own / a consented participant for 24h at a
+# considerate 30-second interval
 ./wamapper -mode probe -target 14155551234 -duration 24h -interval 30s
 ```
 
@@ -57,43 +102,47 @@ pip install -r analysis/requirements.txt
 python analysis/visualize.py data.csv -o report.png
 ```
 
-## Research Governance Console (Web UI)
-
-A responsive, accessible web console for **authorized, consent-based** research
-is available under [`webui/`](webui/README.md). It enforces an allowlist of
-consent-verified participants, frames latency bands as hypotheses (never proof
-of a device state), bounds experiment parameters with an always-available
-emergency stop, and runs on **mock data only** — it does not link an account or
-drive live probing.
-
-```bash
-go run ./cmd/waresearch-ui -addr 127.0.0.1:8080
-# open http://127.0.0.1:8080
-```
-
 ## How It Works
 
-The tool exploits the following observation from the Careless Whisper paper:
+The toolkit builds on the following observation from the Careless Whisper
+paper. The RTT bands below are **research hypotheses**, not confirmed states: a
+measured RTT is consistent with the interpretation, but never proves it.
 
-| RTT Range | Device State | Description |
-|-----------|--------------|-------------|
-| < 300ms | App Foreground | WhatsApp is actively open |
-| 300-1000ms | Screen On | Phone active, WA in background |
-| 1000-3000ms | Screen Off | Phone screen is off |
-| > 3000ms | Doze/Sleep | Power saving mode active |
+| RTT Range | Possible interpretation (hypothesis) |
+|-----------|--------------------------------------|
+| < 300 ms | *possible* foreground activity |
+| 300–1000 ms | *possible* screen-on / background activity |
+| 1000–3000 ms | *possible* screen-off activity |
+| > 3000 ms | *possible* doze, sleep, or network delay |
 
-### Stealthy Probing Technique
+**Confounders.** Network RTT (cellular/Wi-Fi), packet loss, messaging-server
+load, and connection reuse all shift the measured value, and the bands overlap.
+Any interpretation should be reported with confidence and uncertainty, and kept
+distinct from verified ground-truth state (which RTT alone cannot establish).
 
-1. Send a reaction to a **non-existent message ID**
-2. Target device still sends delivery receipt
-3. Measure RTT from send to receipt
-4. **No notification is shown to target**
+### Probing mechanism (a privacy side-channel)
+
+1. Send a reaction to a **non-existent message ID**.
+2. The receiving device still returns a delivery receipt.
+3. RTT is measured from send to receipt.
+4. No notification is shown to the measured device.
+
+Step 4 is why this is a *privacy side-channel* and why the toolkit is
+consent-gated: because the measurement is not visible to the device owner, it
+must only ever be run against a device you own or a participant who has
+consented. It is not a feature to be used against non-consenting people.
 
 ## Project Structure
 
 ```
 whatsmap/
-├── cmd/wamapper/          # CLI tool
+├── webui/                 # Research governance console (recommended UI)
+│   ├── server.go          # HTTP server, consent/limit enforcement, telemetry
+│   ├── validate.go        # Server-side safety + consent validation
+│   ├── static/            # Accessible, theme-aware dashboard (mock data)
+│   └── README.md          # Console documentation
+├── cmd/waresearch-ui/     # Governance console entry point
+├── cmd/wamapper/          # Lower-level CLI tool
 │   ├── main.go            # Main entry point
 │   └── README.md          # Detailed usage guide
 ├── mapper/                # Core mapping functionality
