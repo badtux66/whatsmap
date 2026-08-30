@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhatsMap — Timing Research Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="app-header">
+    <h1>WhatsMap <span class="subtitle">Timing-research governance console</span></h1>
+    <span id="connPill" class="pill" role="status" aria-live="polite">
+      <span class="dot"></span><span id="connPillText">Checking…</span>
+    </span>
+    <button id="emergencyStop" class="danger" type="button" hidden>■ Emergency stop</button>
+  </header>
+
+  <main id="main">
+    <div class="notice" role="note">
+      <strong>Authorized, consent-based research only.</strong>
+      This console enforces an allowlist of enrolled participants and shows synthetic
+      (mock) telemetry. Latency bands are <em>hypotheses</em> — round-trip time is an
+      indirect signal and never proves a device or application state. Covert monitoring
+      of non-consenting individuals is out of scope and disallowed.
+    </div>
+
+    <!-- 1. Connection -->
+    <section class="card col-4" aria-labelledby="connH">
+      <h2 id="connH">Research account</h2>
+      <p class="card-hint">Link an approved account via QR to enable experiments.</p>
+      <div id="connBody" aria-live="polite">
+        <p class="state-block">Loading…</p>
+      </div>
+    </section>
+
+    <!-- 2. Participants -->
+    <section class="card col-8" aria-labelledby="partH">
+      <h2 id="partH">Authorized participants</h2>
+      <p class="card-hint">Only participants with verified consent or documented device-ownership can be targeted. Free-form number entry is intentionally not available.</p>
+      <div id="partBody" aria-live="polite">
+        <p class="state-block">Loading…</p>
+      </div>
+    </section>
+
+    <!-- 3. Experiment controls -->
+    <section class="card col-5" aria-labelledby="expH">
+      <h2 id="expH">Experiment configuration</h2>
+      <p class="card-hint">Safe minimums and a hard cap are enforced on every field.</p>
+      <form id="expForm" novalidate>
+        <div class="field">
+          <label for="testState">Approved test state</label>
+          <p class="desc">The consented scenario the participant will place their own device into.</p>
+          <select id="testState" name="test_state" required>
+            <option value="">Select a test state…</option>
+          </select>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="intervalMs">Probe interval <span class="unit">(ms, min 1000)</span></label>
+            <input type="number" id="intervalMs" name="interval_ms" min="1000" step="100" value="2000" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="durationSec">Duration <span class="unit">(s, max 21600)</span></label>
+            <input type="number" id="durationSec" name="duration_sec" min="10" step="10" value="120" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="maxProbes">Iteration limit <span class="unit">(0 = by duration)</span></label>
+            <input type="number" id="maxProbes" name="max_probes" min="0" step="1" value="30" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="timeoutMs">Probe timeout <span class="unit">(ms, 1000–60000)</span></label>
+            <input type="number" id="timeoutMs" name="timeout_ms" min="1000" max="60000" step="100" value="5000" inputmode="numeric">
+          </div>
+        </div>
+
+        <div id="estimate" class="msg ok" role="status" aria-live="polite">Configure the run to see an estimate.</div>
+        <div id="validationMsg" role="alert"></div>
+
+        <div class="btn-row">
+          <button id="startBtn" class="primary" type="submit" disabled>Start experiment</button>
+          <button id="stopBtn" class="danger" type="button" hidden>Emergency stop</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 4. Live telemetry -->
+    <section class="card col-7" aria-labelledby="liveH">
+      <h2 id="liveH">Live timing signal</h2>
+      <p class="card-hint">Measured RTT over time against hypothesis bands. Distinct from any verified ground-truth state.</p>
+
+      <div class="stat-row">
+        <div class="stat"><div class="k">Current RTT</div><div class="v" id="statCurrent">—</div></div>
+        <div class="stat"><div class="k">Rolling median</div><div class="v" id="statMedian">—</div></div>
+        <div class="stat"><div class="k">p95</div><div class="v" id="statP95">—</div></div>
+        <div class="stat"><div class="k">Samples</div><div class="v" id="statCount">0</div></div>
+      </div>
+
+      <div id="liveBody">
+        <div class="chart-wrap">
+          <svg class="chart" id="chart" viewBox="0 0 640 260" preserveAspectRatio="none"
+               role="img" aria-label="Line chart of measured round-trip time over time with hypothesis bands"></svg>
+        </div>
+        <div class="band-legend" id="bandLegend"></div>
+
+        <h3 class="sub-h">Band distribution &amp; overlap</h3>
+        <p class="card-hint" id="overlapNote">—</p>
+        <div class="dist" id="dist"></div>
+
+        <h3 class="sub-h">Confidence</h3>
+        <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="confMeter">
+          <div class="fill" id="confFill"></div>
+        </div>
+        <p class="card-hint" id="confNote">Confidence grows with sample count and is deliberately capped below certainty.</p>
+
+        <h3 class="sub-h">Confounders</h3>
+        <ul class="confounders" id="confounders"></ul>
+
+        <p class="gt-note" id="gtNote"></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
