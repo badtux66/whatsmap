@@ -107,7 +107,7 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Println(`
+	fmt.Print(`
 WhatsApp Mapper - RTT-based Device Activity Monitoring
 =======================================================
 Based on "Careless Whisper" research paper (arXiv:2411.11194)

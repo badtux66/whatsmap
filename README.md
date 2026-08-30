@@ -57,6 +57,20 @@ pip install -r analysis/requirements.txt
 python analysis/visualize.py data.csv -o report.png
 ```
 
+## Research Governance Console (Web UI)
+
+A responsive, accessible web console for **authorized, consent-based** research
+is available under [`webui/`](webui/README.md). It enforces an allowlist of
+consent-verified participants, frames latency bands as hypotheses (never proof
+of a device state), bounds experiment parameters with an always-available
+emergency stop, and runs on **mock data only** — it does not link an account or
+drive live probing.
+
+```bash
+go run ./cmd/waresearch-ui -addr 127.0.0.1:8080
+# open http://127.0.0.1:8080
+```
+
 ## How It Works
 
 The tool exploits the following observation from the Careless Whisper paper:
