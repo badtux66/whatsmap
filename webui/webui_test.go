@@ -190,6 +190,7 @@ func newTestServer() (*Server, func() time.Time, *time.Time) {
 	s := New(nil)
 	cur := refNow
 	s.now = func() time.Time { return cur }
+	s.linker = newMockLinker(s.now) // Use the test clock for the QR flow too.
 	return s, s.now, &cur
 }
 
@@ -365,12 +366,103 @@ func TestTelemetryFraming(t *testing.T) {
 	}
 }
 
+// ---- Enrollment (any number + consent gate) --------------------------------
+
+func TestEnroll_RequiresAttestationAndReference(t *testing.T) {
+	cases := []struct {
+		name string
+		body enrollRequest
+		sub  string
+	}{
+		{"no attestation", enrollRequest{Contact: "14155551234", Basis: "ownership", Attestation: false}, "confirm"},
+		{"short number", enrollRequest{Contact: "123", Basis: "ownership", Attestation: true}, "valid phone number"},
+		{"consent without reference", enrollRequest{Contact: "14155551234", Basis: "consent", Attestation: true}, "reference is required"},
+		{"missing basis", enrollRequest{Contact: "14155551234", Basis: "", Attestation: true}, "select a basis"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(nil)
+			rec := doRaw(t, s.Handler(), http.MethodPost, "/api/participants", tc.body)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422", rec.Code)
+			}
+			var resp struct {
+				Errors []string `json:"errors"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+			if !containsSub(resp.Errors, tc.sub) {
+				t.Errorf("errors %v missing %q", resp.Errors, tc.sub)
+			}
+		})
+	}
+}
+
+func TestEnroll_OwnershipBecomesTargetable(t *testing.T) {
+	s := connectedServer(t)
+	h := s.Handler()
+
+	row := doJSON[participantRow](t, h, http.MethodPost, "/api/participants",
+		enrollRequest{Contact: "1 (415) 555-1234", Basis: "ownership", Attestation: true})
+	if !row.Eligible {
+		t.Fatalf("newly enrolled owned device should be eligible: %+v", row)
+	}
+	if row.ID == "" || row.ConsentStatus != ConsentVerified || !row.OwnershipVerified {
+		t.Errorf("unexpected enrolled participant: %+v", row.Participant)
+	}
+	// Raw number must not be exposed; contact is masked.
+	if strings.Contains(row.MaskedContact, "5551234") || !strings.Contains(row.MaskedContact, "•") {
+		t.Errorf("contact not masked: %q", row.MaskedContact)
+	}
+
+	// It now appears in the list and an experiment can target it.
+	list := doJSON[[]participantRow](t, h, http.MethodGet, "/api/participants", nil)
+	found := false
+	for _, p := range list {
+		if p.ID == row.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("enrolled participant not in list")
+	}
+
+	cfg := validConfig()
+	cfg.ParticipantID = row.ID
+	st := doJSON[ExperimentState](t, h, http.MethodPost, "/api/experiment/start", cfg)
+	if st.Status != ExpRunning {
+		t.Fatalf("experiment on enrolled participant should start, got %s", st.Status)
+	}
+}
+
+func TestEnroll_RawNumberNotLogged(t *testing.T) {
+	var buf bytes.Buffer
+	s := New(&captureLogger{buf: &buf})
+	doRaw(t, s.Handler(), http.MethodPost, "/api/participants",
+		enrollRequest{Contact: "14155559999", Basis: "ownership", Attestation: true})
+	if strings.Contains(buf.String(), "14155559999") {
+		t.Errorf("raw number leaked into logs: %q", buf.String())
+	}
+}
+
+func TestMaskContact(t *testing.T) {
+	cases := map[string]string{
+		"14155551234": "+1415•••••34",
+		"1234":        "•••1234",
+	}
+	for in, want := range cases {
+		if got := maskContact(in); got != want {
+			t.Errorf("maskContact(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // ---- No-secret-logging -----------------------------------------------------
 
 func TestConnectDoesNotLogQROrToken(t *testing.T) {
 	var buf bytes.Buffer
 	s := New(&captureLogger{buf: &buf})
 	s.now = func() time.Time { return refNow }
+	s.linker = newMockLinker(s.now)
 	h := s.Handler()
 	got := doJSON[SessionStatus](t, h, http.MethodPost, "/api/session/connect", nil)
 
@@ -422,10 +514,9 @@ func connectedServer(t *testing.T) *Server {
 	s := New(nil)
 	cur := refNow
 	s.now = func() time.Time { return cur }
-	s.mu.Lock()
-	s.sessState = ConnConnected
-	s.sessAccount = "research-lab-01 (mock)"
-	s.mu.Unlock()
+	ml := newMockLinker(s.now)
+	ml.forceConnected("research-lab-01 (mock)")
+	s.linker = ml
 	return s
 }
 

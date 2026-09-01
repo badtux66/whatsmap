@@ -86,17 +86,26 @@ function renderConnection(s) {
   body.appendChild(pill);
 
   if (s.message) {
-    const p = el("p", "card-hint");
-    p.style.marginTop = "10px";
-    p.textContent = s.message;
-    body.appendChild(p);
+    if (s.state === "error" || s.state === "expired") {
+      const m = el("div", "msg " + (s.state === "error" ? "error" : "warn"));
+      m.textContent = s.message;
+      body.appendChild(m);
+    } else {
+      const p = el("p", "card-hint");
+      p.style.marginTop = "10px";
+      p.textContent = s.message;
+      body.appendChild(p);
+    }
   }
 
   if (s.state === "pending" && s.qr_matrix) {
     const box = el("div", "qr-box");
     box.appendChild(drawQR(s.qr_matrix));
     const cap = el("p", "qr-caption");
-    cap.textContent = `Mock code — expires in ${s.expires_in_sec}s. This encodes nothing real.`;
+    const expiry = s.expires_in_sec ? ` — refreshes in ~${s.expires_in_sec}s` : "";
+    cap.textContent = s.mock
+      ? `Mock code${expiry}. This encodes nothing real.`
+      : `Scan in WhatsApp → Linked devices${expiry}.`;
     box.appendChild(cap);
     body.appendChild(box);
   }
@@ -217,6 +226,41 @@ function markChosen(ul) {
     const input = li.querySelector("input");
     li.classList.toggle("chosen", input && input.checked);
   });
+}
+
+async function reloadParticipants() {
+  try {
+    renderParticipants(await getJSON("/api/participants"));
+  } catch (e) {
+    /* leave existing list in place */
+  }
+}
+
+async function enrollParticipant(ev) {
+  ev.preventDefault();
+  const body = {
+    contact: $("enrollContact").value.trim(),
+    label: $("enrollLabel").value.trim(),
+    basis: (document.querySelector('input[name="basis"]:checked') || {}).value || "",
+    reference: $("enrollRef").value.trim(),
+    attestation: $("enrollAttest").checked,
+  };
+  const msg = $("enrollMsg");
+  msg.innerHTML = "";
+  const { ok, data } = await postJSON("/api/participants", body);
+  if (!ok) {
+    const m = el("div", "msg error");
+    m.textContent = (data.errors && data.errors.join(" ")) || data.error || "Could not enroll participant.";
+    msg.appendChild(m);
+    return;
+  }
+  const okMsg = el("div", "msg ok");
+  okMsg.textContent = `Enrolled ${data.label} (${data.masked_contact}). It can now be selected below.`;
+  msg.appendChild(okMsg);
+  $("enrollForm").reset();
+  state.selectedParticipant = data.id;
+  await reloadParticipants();
+  revalidate();
 }
 
 // ---- Experiment form -------------------------------------------------------
@@ -570,6 +614,13 @@ async function boot() {
   $("expForm").addEventListener("submit", startExperiment);
   $("stopBtn").addEventListener("click", stopExperiment);
   $("emergencyStop").addEventListener("click", stopExperiment);
+  $("enrollForm").addEventListener("submit", enrollParticipant);
+  document.querySelectorAll('input[name="basis"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      const consent = document.querySelector('input[name="basis"]:checked').value === "consent";
+      $("refUnit").textContent = consent ? "(required for consent)" : "(optional for owned device)";
+    });
+  });
   ["intervalMs", "durationSec", "maxProbes", "timeoutMs", "testState"].forEach((id) => {
     $(id).addEventListener("input", revalidate);
   });
@@ -586,6 +637,9 @@ async function boot() {
     renderTestStates(testStates);
     onExperimentState(exp);
     if (exp.status === "running") startTelemetryPolling();
+    // Kick off pairing automatically so the QR (or a clear error) appears
+    // without a manual click when nothing is linked yet.
+    if (session.state === "idle") act("/api/session/connect");
   } catch (e) {
     showConnError();
     $("partBody").textContent = "";
@@ -595,12 +649,18 @@ async function boot() {
   }
 
   runValidate();
-  // Refresh the connection card periodically so the mock QR state machine
-  // (pending → connected/expired) is reflected without a manual reload.
+  // Refresh the connection card so pairing progresses without a manual reload.
+  // Poll quickly while a code is pending (real QR codes rotate every ~20s and
+  // we want the freshest one on screen) and slowly once the state settles.
+  let lastPoll = 0;
   setInterval(async () => {
     if (state.running) return;
+    const fast = state.connection === "pending" || state.connection === "idle";
+    const now = Date.now();
+    if (now - lastPoll < (fast ? 1500 : 4000)) return;
+    lastPoll = now;
     try { renderConnection(await getJSON("/api/session")); } catch (e) { /* ignore */ }
-  }, 2500);
+  }, 500);
 }
 
 document.addEventListener("DOMContentLoaded", boot);
